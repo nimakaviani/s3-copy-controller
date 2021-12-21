@@ -1,0 +1,20 @@
+# permissions for end users to view objects.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: object-viewer-role
+rules:
+- apiGroups:
+  - s3.aws.dev.nimak.link
+  resources:
+  - objects
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - s3.aws.dev.nimak.link
+  resources:
+  - objects/status
+  verbs:
+  - get

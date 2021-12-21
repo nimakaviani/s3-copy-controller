@@ -1,0 +1,6 @@
+apiVersion: s3.aws.dev.nimak.link/v1alpha1
+kind: Object
+metadata:
+  name: object-sample
+spec:
+  # TODO(user): Add fields here

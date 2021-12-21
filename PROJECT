@@ -1,0 +1,16 @@
+domain: dev.nimak.link
+layout:
+- go.kubebuilder.io/v3
+projectName: s3-copy-controller
+repo: dev.nimak.link/s3-copy-controller
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: dev.nimak.link
+  group: s3.aws.dev.nimak.link
+  kind: Object
+  path: dev.nimak.link/s3-copy-controller/api/v1alpha1
+  version: v1alpha1
+version: "3"

@@ -1,0 +1,42 @@
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: manager-role
+rules:
+- resources:
+  - configmaps
+  verbs:
+  - get
+- resources:
+  - secrets
+  verbs:
+  - get
+- apiGroups:
+  - s3.aws.dev.nimak.link
+  resources:
+  - objects
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - s3.aws.dev.nimak.link
+  resources:
+  - objects/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - s3.aws.dev.nimak.link
+  resources:
+  - objects/status
+  verbs:
+  - get
+  - patch
+  - update

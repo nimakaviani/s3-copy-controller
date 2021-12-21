@@ -1,0 +1,120 @@
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.7.0
+  creationTimestamp: null
+  name: objects.s3.aws.dev.nimak.link
+spec:
+  group: s3.aws.dev.nimak.link
+  names:
+    kind: Object
+    listKind: ObjectList
+    plural: objects
+    singular: object
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Object is the Schema for the objects API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ObjectSpec defines the desired state of Object
+            properties:
+              credentials:
+                properties:
+                  secretRef:
+                    description: A SecretKeySelector is a reference to a secret key
+                      in an arbitrary namespace.
+                    properties:
+                      key:
+                        description: The key to select.
+                        type: string
+                      name:
+                        description: Name of the secret.
+                        type: string
+                      namespace:
+                        description: Namespace of the secret.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    - namespace
+                    type: object
+                  source:
+                    type: string
+                required:
+                - secretRef
+                type: object
+              source:
+                description: An ObjectSource refers to the location to get the object
+                  from
+                properties:
+                  data:
+                    description: raw content for the object
+                    type: string
+                  key:
+                    description: The key to select.
+                    type: string
+                  name:
+                    description: name for configmap
+                    type: string
+                  namespace:
+                    description: namespace for configmap
+                    type: string
+                  ref:
+                    description: 'sourcetype: local / configmap'
+                    type: string
+                type: object
+              target:
+                description: An ObjectTarget refers to the object store reference
+                  to store the object into
+                properties:
+                  bucket:
+                    description: reference to where the object will be stored
+                    type: string
+                  key:
+                    description: object key
+                    type: string
+                  region:
+                    description: region to be used for creds
+                    type: string
+                required:
+                - bucket
+                - key
+                - region
+                type: object
+            required:
+            - credentials
+            - source
+            - target
+            type: object
+          status:
+            description: ObjectStatus defines the observed state of Object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: []
+  storedVersions: []
