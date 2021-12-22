@@ -75,10 +75,15 @@ type ObjectSpec struct {
 
 // ObjectStatus defines the observed state of Object
 type ObjectStatus struct {
+	Synced    string `json:"synced,required"`
+	Reference string `json:"reference"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+//+kubebuilder:printcolumn:name="Synced",type="string",JSONPath=".status.synced",description="Whether or not the sync succeeded"
+//+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+//+kubebuilder:printcolumn:name="Reference",type="string",JSONPath=".status.reference",description="Object reference in the target object store"
 
 // Object is the Schema for the objects API
 type Object struct {

@@ -19,12 +19,15 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -35,12 +38,14 @@ import (
 // ObjectReconciler reconciles a Object object
 type ObjectReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects/finalizers,verbs=update
+//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 //+kubebuilder:rbac:resources=secrets,verbs=get
 //+kubebuilder:rbac:resources=configmaps,verbs=get
 
@@ -66,28 +71,59 @@ func (r *ObjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object) {
+	var (
+		err        error
+		secretData []byte
+		objData    []byte
+		cfg        *aws.Config
+	)
+
 	log := log.FromContext(ctx)
-	secretData, err := r.getSecret(ctx, obj)
-	if err != nil {
-		log.Error(err, "failed to retrieve secret")
-	}
+	log.Info("processing resource", "key", client.ObjectKeyFromObject(obj))
 
-	cfg, err := useProviderSecret(ctx, secretData, DefaultProfile, obj.Spec.Target.Region)
-	if err != nil {
-		log.Error(err, "failed to create aws config")
-	}
+	defer r.finalize(ctx, obj, &err)
 
-	objData, err := r.getContent(ctx, obj)
-	if err != nil {
-		log.Error(err, "failed to pull object content")
-	}
-
-	if err := NewS3ObjectStore(cfg).Store(ctx, objData, obj.Spec.Target); err != nil {
-		log.Error(err, "failed to store to object store")
+	if secretData, err = r.getSecret(ctx, obj); err != nil {
 		return
 	}
 
-	log.Info("data sync succeeded", getReference(obj))
+	if cfg, err = useProviderSecret(ctx, secretData, DefaultProfile, obj.Spec.Target.Region); err != nil {
+		return
+	}
+
+	if objData, err = r.getContent(ctx, obj); err != nil {
+		return
+	}
+
+	if err = NewS3ObjectStore(cfg).Store(ctx, objData, obj.Spec.Target); err != nil {
+		return
+	}
+}
+
+func (r *ObjectReconciler) finalize(ctx context.Context, obj *cloudobject.Object, processingError *error) {
+	log := log.FromContext(ctx)
+
+	pe := *processingError
+	if pe != nil {
+		log.Error(pe, "failed to sync resource")
+
+		obj.Status.Synced = strconv.FormatBool(false)
+		obj.Status.Reference = ""
+		r.Recorder.Event(obj, corev1.EventTypeWarning, "Failed", pe.Error())
+		if err := r.Status().Update(ctx, obj); err != nil {
+			log.Error(err, "failed to update object")
+		}
+		return
+	}
+
+	obj.Status.Synced = strconv.FormatBool(true)
+	obj.Status.Reference = fmt.Sprintf("s3://%s/%s", obj.Spec.Target.Bucket, obj.Spec.Target.Key)
+	if err := r.Status().Update(ctx, obj); err != nil {
+		log.Error(err, "failed to update object")
+	}
+
+	r.Recorder.Event(obj, corev1.EventTypeNormal, "Synced", fmt.Sprintf("object reference: %s", getReference(obj)))
+	log.Info("successfully synced resource", "key", getReference(obj))
 }
 
 func (r *ObjectReconciler) getSecret(ctx context.Context, obj *cloudobject.Object) ([]byte, error) {

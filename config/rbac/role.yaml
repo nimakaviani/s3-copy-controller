@@ -10,6 +10,13 @@ rules:
   - configmaps
   verbs:
   - get
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 - resources:
   - secrets
   verbs:
