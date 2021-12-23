@@ -3,4 +3,18 @@ kind: Object
 metadata:
   name: object-sample
 spec:
-  # TODO(user): Add fields here
+  deletionPolicy: delete
+  target:
+    region: us-west-2
+    bucket: nk-sample-bucket
+    key: scripts/code.txt
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: aws-account-creds
+      key: aws.creds
+  source:
+    data: |
+      this is a sample file
+      stored under s3://nk-sample-bucket/code.txt
