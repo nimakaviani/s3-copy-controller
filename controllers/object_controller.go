@@ -125,7 +125,7 @@ func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object,
 	log.Info("processing resource", "key", client.ObjectKeyFromObject(obj), "action", action)
 
 	defer func() {
-		controllerError = r.processError(ctx, obj, &err)
+		controllerError = r.processError(ctx, obj, action, &err)
 	}()
 
 	if secretData, err = r.getSecret(ctx, obj); err != nil {
@@ -174,7 +174,7 @@ func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object,
 	return controllerError
 }
 
-func (r *ObjectReconciler) processError(ctx context.Context, obj *cloudobject.Object, processingError *error) error {
+func (r *ObjectReconciler) processError(ctx context.Context, obj *cloudobject.Object, action Action, processingError *error) error {
 	pe := *processingError
 	if pe == nil {
 		return nil
@@ -188,6 +188,12 @@ func (r *ObjectReconciler) processError(ctx context.Context, obj *cloudobject.Ob
 	r.Recorder.Event(obj, corev1.EventTypeWarning, Failed, pe.Error())
 	if err := r.Status().Update(ctx, obj); err != nil {
 		return err
+	}
+
+	// fail reconciler and prevent resource deletion
+	// if along the way deleting the remote object fails
+	if action == DeleteAction {
+		return pe
 	}
 
 	return nil
