@@ -1,4 +1,4 @@
-package controllers
+package api
 
 import (
 	"context"
@@ -8,4 +8,5 @@ import (
 
 type ObjectStore interface {
 	Store(context.Context, []byte, cloudobject.ObjectTarget) error
+	Delete(context.Context, cloudobject.ObjectTarget) error
 }

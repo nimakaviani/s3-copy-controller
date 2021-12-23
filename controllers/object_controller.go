@@ -30,9 +30,11 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	cloudobject "dev.nimak.link/s3-copy-controller/api/v1alpha1"
+	awshelper "dev.nimak.link/s3-copy-controller/controllers/aws"
 )
 
 // ObjectReconciler reconciles a Object object
@@ -42,24 +44,65 @@ type ObjectReconciler struct {
 	Recorder record.EventRecorder
 }
 
+const (
+	ObjectFinalizer = "s3.aws.dev.nimak.link/finalizer"
+	Failed          = "Failed"
+	Synced          = "Synced"
+	Removed         = "Removed"
+
+	// switch elements
+	Delete    = "delete"
+	Retain    = "retain"
+	Local     = "local"
+	ConfigMap = "configmap"
+	Empty     = ""
+)
+
+type Action int
+
+const (
+	StoreAction = iota
+	DeleteAction
+)
+
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
-//+kubebuilder:rbac:resources=secrets,verbs=get
 //+kubebuilder:rbac:resources=configmaps,verbs=get
+//+kubebuilder:rbac:resources=secrets,verbs=get
 
 func (r *ObjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
-
-	// secret := &corev1.Secret{}
-	var childObj cloudobject.Object
-	if err := r.Get(ctx, req.NamespacedName, &childObj); err != nil {
-		log.Error(err, "fetching secret failed")
+	var obj cloudobject.Object
+	if err := r.Get(ctx, req.NamespacedName, &obj); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	go r.process(ctx, &childObj)
+	if obj.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(&obj, ObjectFinalizer) {
+			controllerutil.AddFinalizer(&obj, ObjectFinalizer)
+			if err := r.Update(ctx, &obj); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		// process object creation / update
+		if err := r.process(ctx, &obj, StoreAction); err != nil {
+			return ctrl.Result{}, err
+		}
+	} else {
+		if controllerutil.ContainsFinalizer(&obj, ObjectFinalizer) {
+			if err := r.deleteExternalResources(ctx, &obj); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			controllerutil.RemoveFinalizer(&obj, ObjectFinalizer)
+			if err := r.Update(ctx, &obj); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	}
+
+	// stop reconciliation after processing resource
 	return ctrl.Result{}, nil
 }
 
@@ -70,7 +113,7 @@ func (r *ObjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object) {
+func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object, action Action) (controllerError error) {
 	var (
 		err        error
 		secretData []byte
@@ -79,15 +122,17 @@ func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object)
 	)
 
 	log := log.FromContext(ctx)
-	log.Info("processing resource", "key", client.ObjectKeyFromObject(obj))
+	log.Info("processing resource", "key", client.ObjectKeyFromObject(obj), "action", action)
 
-	defer r.finalize(ctx, obj, &err)
+	defer func() {
+		controllerError = r.processError(ctx, obj, &err)
+	}()
 
 	if secretData, err = r.getSecret(ctx, obj); err != nil {
 		return
 	}
 
-	if cfg, err = useProviderSecret(ctx, secretData, DefaultProfile, obj.Spec.Target.Region); err != nil {
+	if cfg, err = awshelper.UseProviderSecret(ctx, secretData, awshelper.DefaultProfile, obj.Spec.Target.Region); err != nil {
 		return
 	}
 
@@ -95,35 +140,57 @@ func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object)
 		return
 	}
 
-	if err = NewS3ObjectStore(cfg).Store(ctx, objData, obj.Spec.Target); err != nil {
-		return
+	objectStore := awshelper.NewS3ObjectStore(cfg)
+	switch action {
+	case StoreAction:
+		if err = objectStore.Store(ctx, objData, obj.Spec.Target); err != nil {
+			return
+		}
+
+		obj.Status.Synced = strconv.FormatBool(true)
+		obj.Status.Reference = fmt.Sprintf("s3://%s/%s", obj.Spec.Target.Bucket, obj.Spec.Target.Key)
+		if controllerError = r.Status().Update(ctx, obj); controllerError != nil {
+			return
+		}
+
+		r.Recorder.Event(obj, corev1.EventTypeNormal, Synced, fmt.Sprintf("object reference: %s", getReference(obj)))
+		log.Info("successfully synced resource", "key", getReference(obj))
+
+	case DeleteAction:
+		switch strings.ToLower(obj.Spec.DeletionPolicy) {
+		case Delete:
+			if err = objectStore.Delete(ctx, obj.Spec.Target); err != nil {
+				return
+			}
+			log.Info("successfully deleted resource", "key", getReference(obj))
+		case Retain:
+			log.Info("retaining the object in the object store")
+			// do nothing
+		default:
+			err = errors.Errorf("invalid deletionPolicy %s", obj.Spec.DeletionPolicy)
+		}
 	}
+
+	return controllerError
 }
 
-func (r *ObjectReconciler) finalize(ctx context.Context, obj *cloudobject.Object, processingError *error) {
-	log := log.FromContext(ctx)
-
+func (r *ObjectReconciler) processError(ctx context.Context, obj *cloudobject.Object, processingError *error) error {
 	pe := *processingError
-	if pe != nil {
-		log.Error(pe, "failed to sync resource")
-
-		obj.Status.Synced = strconv.FormatBool(false)
-		obj.Status.Reference = ""
-		r.Recorder.Event(obj, corev1.EventTypeWarning, "Failed", pe.Error())
-		if err := r.Status().Update(ctx, obj); err != nil {
-			log.Error(err, "failed to update object")
-		}
-		return
+	if pe == nil {
+		return nil
 	}
 
-	obj.Status.Synced = strconv.FormatBool(true)
-	obj.Status.Reference = fmt.Sprintf("s3://%s/%s", obj.Spec.Target.Bucket, obj.Spec.Target.Key)
+	log := log.FromContext(ctx)
+	log.Error(pe, "failed to sync resource")
+
+	obj.Status.Synced = strconv.FormatBool(false)
+	obj.Status.Reference = ""
+	r.Recorder.Event(obj, corev1.EventTypeWarning, Failed, pe.Error())
 	if err := r.Status().Update(ctx, obj); err != nil {
-		log.Error(err, "failed to update object")
+		return err
 	}
 
-	r.Recorder.Event(obj, corev1.EventTypeNormal, "Synced", fmt.Sprintf("object reference: %s", getReference(obj)))
-	log.Info("successfully synced resource", "key", getReference(obj))
+	return nil
 }
 
 func (r *ObjectReconciler) getSecret(ctx context.Context, obj *cloudobject.Object) ([]byte, error) {
@@ -148,13 +215,13 @@ func (r *ObjectReconciler) getSecret(ctx context.Context, obj *cloudobject.Objec
 func (r *ObjectReconciler) getContent(ctx context.Context, obj *cloudobject.Object) ([]byte, error) {
 	src := obj.Spec.Source
 	switch strings.ToLower(src.Ref) {
-	case "", "local":
+	case Local, Empty:
 		if src.Data == "" {
 			return nil, errors.New("data field required for a 'local' reference")
 		}
 		return []byte(src.Data), nil
 
-	case "configmap":
+	case ConfigMap:
 		var cm corev1.ConfigMap
 		dataRef := types.NamespacedName{Namespace: src.Namespace, Name: src.Name}
 		if err := r.Get(ctx, dataRef, &cm); err != nil {
@@ -176,4 +243,8 @@ func getReference(obj *cloudobject.Object) string {
 		obj.Name,
 		obj.Spec.Target.Bucket, obj.Spec.Target.Key,
 	)
+}
+
+func (r *ObjectReconciler) deleteExternalResources(ctx context.Context, obj *cloudobject.Object) error {
+	return r.process(ctx, obj, DeleteAction)
 }

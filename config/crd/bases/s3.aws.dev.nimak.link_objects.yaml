@@ -73,6 +73,8 @@ spec:
                 required:
                 - secretRef
                 type: object
+              deletionPolicy:
+                type: string
               source:
                 description: An ObjectSource refers to the location to get the object
                   from
@@ -113,6 +115,7 @@ spec:
                 type: object
             required:
             - credentials
+            - deletionPolicy
             - source
             - target
             type: object

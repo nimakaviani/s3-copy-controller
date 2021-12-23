@@ -1,4 +1,4 @@
-package controllers
+package aws
 
 import (
 	"context"
@@ -57,7 +57,7 @@ func credentialsIDSecret(data []byte, profile string) (aws.Credentials, error) {
 }
 
 // UseProviderSecret - AWS configuration which can be used to issue requests against AWS API
-func useProviderSecret(ctx context.Context, data []byte, profile, region string) (*aws.Config, error) {
+func UseProviderSecret(ctx context.Context, data []byte, profile, region string) (*aws.Config, error) {
 	creds, err := credentialsIDSecret(data, profile)
 	if err != nil {
 		return nil, errors.Wrap(err, "cannot parse credentials secret")

@@ -68,14 +68,15 @@ type ObjectTarget struct {
 
 // ObjectSpec defines the desired state of Object
 type ObjectSpec struct {
-	Credentials Credentials  `json:"credentials,required"`
-	Source      ObjectSource `json:"source,required"`
-	Target      ObjectTarget `json:"target,required"`
+	DeletionPolicy string       `json:"deletionPolicy"`
+	Credentials    Credentials  `json:"credentials,required"`
+	Source         ObjectSource `json:"source,required"`
+	Target         ObjectTarget `json:"target,required"`
 }
 
 // ObjectStatus defines the observed state of Object
 type ObjectStatus struct {
-	Synced    string `json:"synced,required"`
+	Synced    string `json:"synced"`
 	Reference string `json:"reference"`
 }
 
