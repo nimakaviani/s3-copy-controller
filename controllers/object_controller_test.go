@@ -85,10 +85,7 @@ var _ = Describe("Object controller", func() {
 			// We'll need to retry getting this newly created CronJob, given that creation may not immediately happen.
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, jobLookupKey, createdObj)
-				if err != nil {
-					return false
-				}
-				return true
+				return err == nil
 			}, timeout, interval).Should(BeTrue())
 			Expect(createdObj.Spec.DeletionPolicy).Should(Equal("Delete"))
 		})

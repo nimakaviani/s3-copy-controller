@@ -45,7 +45,7 @@ func (s *s3ObjectStore) Store(ctx context.Context, content []byte, target cloudo
 		Body:   bytes.NewReader(content),
 	}
 
-	_, err := s.client.PutObject(ctx, input)
+	_, err := ctrlapi.PutItem(ctx, s.client, input)
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func (s *s3ObjectStore) Delete(ctx context.Context, target cloudobject.ObjectTar
 		Key:    &target.Key,
 	}
 
-	if _, err := s.client.DeleteObject(ctx, input); err != nil {
+	if _, err := ctrlapi.DeleteItem(ctx, s.client, input); err != nil {
 		return err
 	}
 
