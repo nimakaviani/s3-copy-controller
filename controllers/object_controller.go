@@ -115,7 +115,11 @@ func (r *ObjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object, action Action) (controllerError error) {
 	var (
-		err        error
+		// we use err to capture non-controller errors and
+		// handle them separately for external operations
+		// via the deferred function `processError`
+		err error
+
 		secretData []byte
 		objData    []byte
 		cfg        *aws.Config
@@ -171,7 +175,7 @@ func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object,
 		}
 	}
 
-	return controllerError
+	return nil
 }
 
 func (r *ObjectReconciler) processError(ctx context.Context, obj *cloudobject.Object, action Action, processingError *error) error {
