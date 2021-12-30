@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	DefaultProfile = "default"
+	defaultProfile = "default"
 )
 
 // StringValue converts the supplied string pointer to a string, returning the
@@ -73,7 +73,7 @@ func credentialsIDSecret(data []byte, profile string) (aws.Credentials, error) {
 }
 
 // UseProviderSecret - AWS configuration which can be used to issue requests against AWS API
-func UseProviderSecret(ctx context.Context, data []byte, profile, region string) (*aws.Config, error) {
+func useProviderSecret(ctx context.Context, data []byte, region, profile string) (*aws.Config, error) {
 	creds, err := credentialsIDSecret(data, profile)
 	if err != nil {
 		return nil, errors.Wrap(err, "cannot parse credentials secret")

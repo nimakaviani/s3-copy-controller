@@ -40,8 +40,12 @@ var _ = Describe("Object controller", func() {
 		interval = time.Millisecond * 250
 	)
 
+	var (
+		objLookupKey = types.NamespacedName{Name: ObjName, Namespace: Namespace}
+	)
+
 	Context("When updating Object Status", func() {
-		BeforeEach(func() {
+		JustBeforeEach(func() {
 			By("By creating a new Object")
 			ctx := context.Background()
 			obj := &cloudobj.Object{
@@ -78,16 +82,41 @@ var _ = Describe("Object controller", func() {
 			Expect(k8sClient.Create(ctx, obj)).Should(Succeed())
 		})
 
-		It("should create the object in the cluser", func() {
-			jobLookupKey := types.NamespacedName{Name: ObjName, Namespace: Namespace}
-			createdObj := &cloudobj.Object{}
+		When("object is created", func() {
+			var (
+				createdObject *cloudobj.Object
+			)
 
-			// We'll need to retry getting this newly created CronJob, given that creation may not immediately happen.
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, jobLookupKey, createdObj)
-				return err == nil
-			}, timeout, interval).Should(BeTrue())
-			Expect(createdObj.Spec.DeletionPolicy).Should(Equal("Delete"))
+			JustBeforeEach(func() {
+				createdObject = &cloudobj.Object{}
+
+				// We'll need to retry getting this newly created Object, given that creation may not immediately happen.
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, objLookupKey, createdObject)
+					return err == nil
+				}, timeout, interval).Should(BeTrue())
+			})
+
+			AfterEach(func() {
+				Expect(k8sClient.Delete(ctx, createdObject)).Should(Succeed())
+			})
+
+			It("should have the object created in the cluster", func() {
+				Expect(createdObject.Spec.DeletionPolicy).Should(Equal("Delete"))
+			})
+
+			When("no secret exists", func() {
+				It("Sync should not be true", func() {
+					Consistently(func() bool {
+						err := k8sClient.Get(ctx, objLookupKey, createdObject)
+						if err != nil {
+							return false
+						}
+						return createdObject.Status.Synced == ""
+					})
+				})
+			})
 		})
 	})
+
 })
