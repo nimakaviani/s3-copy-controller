@@ -19,10 +19,8 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,18 +32,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	cloudobject "dev.nimak.link/s3-copy-controller/api/v1alpha1"
-	awshelper "dev.nimak.link/s3-copy-controller/controllers/aws"
+	ctrlapi "dev.nimak.link/s3-copy-controller/controllers/api"
 )
 
 // ObjectReconciler reconciles a Object object
 type ObjectReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme       *runtime.Scheme
+	Recorder     record.EventRecorder
+	StoreManager ctrlapi.StoreManager
 }
 
 const (
-	ObjectFinalizer = "s3.aws.dev.nimak.link/finalizer"
+	ObjectFinalizer = "objstore.dev.nimak.link/finalizer"
 	Failed          = "Failed"
 	Synced          = "Synced"
 	Removed         = "Removed"
@@ -91,7 +90,7 @@ func (r *ObjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 	} else {
 		if controllerutil.ContainsFinalizer(&obj, ObjectFinalizer) {
-			if err := r.deleteExternalResources(ctx, &obj); err != nil {
+			if err := r.process(ctx, &obj, DeleteAction); err != nil {
 				return ctrl.Result{}, err
 			}
 
@@ -122,7 +121,6 @@ func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object,
 
 		secretData []byte
 		objData    []byte
-		cfg        *aws.Config
 	)
 
 	log := log.FromContext(ctx)
@@ -132,33 +130,30 @@ func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object,
 		controllerError = r.processError(ctx, obj, action, &err)
 	}()
 
-	if secretData, err = r.getSecret(ctx, obj); err != nil {
+	if secretData, err = r.pullSecret(ctx, obj); err != nil {
 		return
 	}
 
-	if cfg, err = awshelper.UseProviderSecret(ctx, secretData, awshelper.DefaultProfile, obj.Spec.Target.Region); err != nil {
-		return
-	}
-
-	if objData, err = r.getContent(ctx, obj); err != nil {
-		return
-	}
-
-	objectStore := awshelper.NewS3ObjectStore(cfg)
+	log.Info("fetching object store")
+	objectStore := r.StoreManager.Get(ctrlapi.ConfigData{Secret: secretData, Region: obj.Spec.Target.Region})
 	switch action {
 	case StoreAction:
+		if objData, err = r.extractData(ctx, obj); err != nil {
+			return
+		}
+
 		if err = objectStore.Store(ctx, objData, obj.Spec.Target); err != nil {
 			return
 		}
 
-		obj.Status.Synced = strconv.FormatBool(true)
+		obj.Status.Synced = true
 		obj.Status.Reference = fmt.Sprintf("s3://%s/%s", obj.Spec.Target.Bucket, obj.Spec.Target.Key)
 		if controllerError = r.Status().Update(ctx, obj); controllerError != nil {
 			return
 		}
 
-		r.Recorder.Event(obj, corev1.EventTypeNormal, Synced, fmt.Sprintf("object reference: %s", getReference(obj)))
-		log.Info("successfully synced resource", "key", getReference(obj))
+		r.Recorder.Event(obj, corev1.EventTypeNormal, Synced, fmt.Sprintf("object reference: %s", printReference(obj)))
+		log.Info("successfully synced resource", "key", printReference(obj))
 
 	case DeleteAction:
 		switch strings.ToLower(obj.Spec.DeletionPolicy) {
@@ -166,7 +161,7 @@ func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object,
 			if err = objectStore.Delete(ctx, obj.Spec.Target); err != nil {
 				return
 			}
-			log.Info("successfully deleted resource", "key", getReference(obj))
+			log.Info("successfully deleted resource", "key", printReference(obj))
 		case Retain:
 			log.Info("retaining the object in the object store")
 			// do nothing
@@ -187,7 +182,7 @@ func (r *ObjectReconciler) processError(ctx context.Context, obj *cloudobject.Ob
 	log := log.FromContext(ctx)
 	log.Error(pe, "failed to sync resource")
 
-	obj.Status.Synced = strconv.FormatBool(false)
+	obj.Status.Synced = false
 	obj.Status.Reference = ""
 	r.Recorder.Event(obj, corev1.EventTypeWarning, Failed, pe.Error())
 	if err := r.Status().Update(ctx, obj); err != nil {
@@ -203,7 +198,7 @@ func (r *ObjectReconciler) processError(ctx context.Context, obj *cloudobject.Ob
 	return nil
 }
 
-func (r *ObjectReconciler) getSecret(ctx context.Context, obj *cloudobject.Object) ([]byte, error) {
+func (r *ObjectReconciler) pullSecret(ctx context.Context, obj *cloudobject.Object) ([]byte, error) {
 	creds := obj.Spec.Credentials
 	if creds.Source != "" && creds.Source != "Secret" {
 		return nil, errors.Errorf("wrong source %s", creds.Source)
@@ -222,9 +217,9 @@ func (r *ObjectReconciler) getSecret(ctx context.Context, obj *cloudobject.Objec
 	return secretData, nil
 }
 
-func (r *ObjectReconciler) getContent(ctx context.Context, obj *cloudobject.Object) ([]byte, error) {
+func (r *ObjectReconciler) extractData(ctx context.Context, obj *cloudobject.Object) ([]byte, error) {
 	src := obj.Spec.Source
-	switch strings.ToLower(src.Ref) {
+	switch strings.ToLower(src.Reference) {
 	case Local, Empty:
 		if src.Data == "" {
 			return nil, errors.New("data field required for a 'local' reference")
@@ -248,13 +243,9 @@ func (r *ObjectReconciler) getContent(ctx context.Context, obj *cloudobject.Obje
 	}
 }
 
-func getReference(obj *cloudobject.Object) string {
+func printReference(obj *cloudobject.Object) string {
 	return fmt.Sprintf("%s -> %s:%s",
 		obj.Name,
 		obj.Spec.Target.Bucket, obj.Spec.Target.Key,
 	)
-}
-
-func (r *ObjectReconciler) deleteExternalResources(ctx context.Context, obj *cloudobject.Object) error {
-	return r.process(ctx, obj, DeleteAction)
 }

@@ -91,7 +91,8 @@ spec:
                   namespace:
                     description: namespace for configmap
                     type: string
-                  ref:
+                  reference:
+                    default: local
                     description: 'sourcetype: local / configmap'
                     type: string
                 type: object
@@ -125,7 +126,8 @@ spec:
               reference:
                 type: string
               synced:
-                type: string
+                default: false
+                type: boolean
             required:
             - reference
             - synced

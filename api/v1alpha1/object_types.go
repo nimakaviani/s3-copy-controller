@@ -45,7 +45,8 @@ type Credentials struct {
 // An ObjectSource refers to the location to get the object from
 type ObjectSource struct {
 	// sourcetype: local / configmap
-	Ref string `json:"ref,omitempty"`
+	// +kubebuilder:default:=local
+	Reference string `json:"reference,omitempty"`
 	// namespace for configmap
 	Namespace string `json:"namespace,omitempty"`
 	// name for configmap
@@ -76,7 +77,8 @@ type ObjectSpec struct {
 
 // ObjectStatus defines the observed state of Object
 type ObjectStatus struct {
-	Synced    string `json:"synced"`
+	// +kubebuilder:default:=false
+	Synced    bool   `json:"synced"`
 	Reference string `json:"reference"`
 }
 

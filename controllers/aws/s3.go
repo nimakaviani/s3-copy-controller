@@ -22,30 +22,33 @@ import (
 
 	cloudobject "dev.nimak.link/s3-copy-controller/api/v1alpha1"
 	ctrlapi "dev.nimak.link/s3-copy-controller/controllers/api"
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type s3ObjectStore struct {
-	cfg    *aws.Config
-	client *s3.Client
+	config ctrlapi.ConfigData
 }
 
-func NewS3ObjectStore(cfg *aws.Config) ctrlapi.ObjectStore {
+func NewS3ObjectStore(config ctrlapi.ConfigData) ctrlapi.ObjectStore {
 	return &s3ObjectStore{
-		cfg:    cfg,
-		client: s3.NewFromConfig(*cfg),
+		config: config,
 	}
 }
 
 func (s *s3ObjectStore) Store(ctx context.Context, content []byte, target cloudobject.ObjectTarget) error {
+	cfg, err := useProviderSecret(ctx, s.config.Secret, s.config.Region, defaultProfile)
+	if err != nil {
+		return err
+	}
+
 	input := &s3.PutObjectInput{
 		Bucket: &target.Bucket,
 		Key:    &target.Key,
 		Body:   bytes.NewReader(content),
 	}
 
-	_, err := ctrlapi.PutItem(ctx, s.client, input)
+	client := s3.NewFromConfig(*cfg)
+	_, err = ctrlapi.PutItem(ctx, client, input)
 	if err != nil {
 		return err
 	}
@@ -54,12 +57,18 @@ func (s *s3ObjectStore) Store(ctx context.Context, content []byte, target cloudo
 }
 
 func (s *s3ObjectStore) Delete(ctx context.Context, target cloudobject.ObjectTarget) error {
+	cfg, err := useProviderSecret(ctx, s.config.Secret, s.config.Region, defaultProfile)
+	if err != nil {
+		return err
+	}
+
 	input := &s3.DeleteObjectInput{
 		Bucket: &target.Bucket,
 		Key:    &target.Key,
 	}
 
-	if _, err := ctrlapi.DeleteItem(ctx, s.client, input); err != nil {
+	client := s3.NewFromConfig(*cfg)
+	if _, err = ctrlapi.DeleteItem(ctx, client, input); err != nil {
 		return err
 	}
 
