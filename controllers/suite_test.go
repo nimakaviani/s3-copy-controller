@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	cloudobj "dev.nimak.link/s3-copy-controller/api/v1alpha1"
+	"dev.nimak.link/s3-copy-controller/controllers/api/apifakes"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -44,6 +45,8 @@ var k8sClient client.Client
 var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
+var fakeStoreManager *apifakes.FakeStoreManager
+var fakeObjectStore *apifakes.FakeObjectStore
 
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -82,10 +85,15 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
+	fakeStoreManager = &apifakes.FakeStoreManager{}
+	fakeObjectStore = &apifakes.FakeObjectStore{}
+	fakeStoreManager.GetReturns(fakeObjectStore)
+
 	err = (&ObjectReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("object-controller"),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Recorder:     mgr.GetEventRecorderFor("object-controller"),
+		StoreManager: fakeStoreManager,
 	}).SetupWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 

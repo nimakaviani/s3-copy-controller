@@ -135,6 +135,7 @@ func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object,
 		return
 	}
 
+	log.Info("fetching object store")
 	objectStore := r.StoreManager.Get(ctrlapi.ConfigData{Secret: secretData, Region: obj.Spec.Target.Region})
 	switch action {
 	case StoreAction:
