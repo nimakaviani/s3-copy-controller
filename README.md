@@ -1,6 +1,6 @@
 # S3 Copy Controller
 
-_S3CopyController_ is a data plane controller that allows data from custom
+_S3CopyController_ is a data plane Kubernetes controller that allows data from custom
 Kubernetes objects or `ConfigMaps` to be saved to a cloud Object Store (for
 now, AWS S3 only).
 
@@ -16,6 +16,12 @@ against your Kubernetes cluster using the following command:
 
 ```
 make deploy
+```
+
+or you can alternatively run Kustomize `build`, and deploy resources:
+
+```
+kustomize build config/default | kube apply -f -
 ```
 
 ## Usage

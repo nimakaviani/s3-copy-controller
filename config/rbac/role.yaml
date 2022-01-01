@@ -6,21 +6,29 @@ metadata:
   creationTimestamp: null
   name: manager-role
 rules:
-- resources:
+- apiGroups:
+  - ""
+  resources:
   - configmaps
   verbs:
   - get
+  - list
+  - watch
 - apiGroups:
   - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - s3.aws.dev.nimak.link
   resources:
   - events
   verbs:
   - create
   - patch
-- resources:
-  - secrets
-  verbs:
-  - get
 - apiGroups:
   - s3.aws.dev.nimak.link
   resources:

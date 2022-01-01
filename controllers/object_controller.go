@@ -67,9 +67,9 @@ const (
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects/finalizers,verbs=update
-//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
-//+kubebuilder:rbac:resources=configmaps,verbs=get
-//+kubebuilder:rbac:resources=secrets,verbs=get
+//+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=events,verbs=create;patch
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 func (r *ObjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var obj cloudobject.Object
@@ -207,7 +207,7 @@ func (r *ObjectReconciler) pullSecret(ctx context.Context, obj *cloudobject.Obje
 	var secret corev1.Secret
 	secretRef := types.NamespacedName{Namespace: creds.SecretReference.Namespace, Name: creds.SecretReference.Name}
 	if err := r.Get(ctx, secretRef, &secret); err != nil {
-		return nil, errors.Errorf("unrecognized credentials %s:%s", creds.SecretReference.Namespace, creds.SecretReference.Name)
+		return nil, errors.Errorf("%s %s:%s", err.Error(), creds.SecretReference.Namespace, creds.SecretReference.Name)
 	}
 
 	secretData, ok := secret.Data[creds.SecretReference.Key]
