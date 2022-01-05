@@ -28,7 +28,7 @@ Run the following command to verify the deployment
 kubectl api-resources | grep objects
 ```
 
-Output should like below 
+Output should look like below
 
     NAME     SHORTNAMES                 APIGROUP                       NAMESPACED   KIND
     objects s3.aws.dev.nimak.link       true Object
