@@ -15,8 +15,23 @@ You should be able to use KubeBuilder's internal scripts to deploy directly
 against your Kubernetes cluster using the following command:
 
 ```
+git clone https://github.com/nimakaviani/s3-copy-controller.git
+
+cd s3-copy-controller
+
 make deploy
 ```
+
+Run the following command to verify the deployment
+
+```shell script
+kubectl api-resources | grep objects
+```
+
+Output should look like below
+
+    NAME     SHORTNAMES                 APIGROUP                       NAMESPACED   KIND
+    objects s3.aws.dev.nimak.link       true Object
 
 or you can alternatively run Kustomize `build`, and deploy resources:
 
@@ -29,16 +44,43 @@ kustomize build config/default | kube apply -f -
 With the controller running on your cluster, you need to first provide AWS login
 credentials in the form of a secret to your cluster:
 
+### Step1: Create Base64 Encoded AWS Credentials
+
+Create a text file with the actual AWS credentials
+
+`creds.txt`
+```sh
+AWS_ACCESS_KEY_ID=ASIAUHGDERSWSWPYVM2DDUMMYDUMMY
+AWS_SECRET_ACCESS_KEY=ZBo0Q0lDUMMYNyL5DUMMYDUMMY
+AWS_SESSION_TOKEN=RYRHHVGVNNNDUMMYDUMMYDUMMYDUMMY
+```
+
+And run the following command from Mac command line
+
+```sh
+openssl base64 -in creds.txt -out base64-creds.txt
+```
+
+Copy the output as a string from `base64-creds.txt` and use it in Secret object under `aws.creds`
+
+### Step2: Create `Secret` Object 
+
+Create Secret object using `kubectl apply` with the following content
+
 ```yaml
 apiVersion: v1
 data:
-  aws.creds: [BASE64 Encoded Credentials]
+  aws.creds: <Enter BASE64 Encoded AWS Credentials>
 kind: Secret
 metadata:
   name: aws-account-creds
   namespace: default
 type: Opaque
 ```
+
+### Step3: Deploy Sample `Object` 
+
+Create sample Object for S3 Copy using `kubectl apply`
 
 With the secrets deployed, a sample `Object` resource looks like the following:
 
@@ -56,8 +98,8 @@ spec:
       and more ...
   target:
     region: us-west-2
-    bucket: some-bucket
-    key: scripts/data.txt
+    bucket: <Enter S3 Bucket Name>
+    key: <S3 Prefix>/<filename>.txt
   credentials:
     source: Secret
     secretRef:
@@ -66,8 +108,8 @@ spec:
       key: aws.creds
 ```
 
-Submitting the following resource to your Kubenretes cluster should result in an
-object getting created under `s3://some-bucket/scripts/data.txt`, with its
+Submitting the following resource to your Kubernetes cluster should result in an
+object getting created under `s3://<YourBucketName>/<S3 Prefix>/<filename>.txt`, with its
 content coming from `Spec.Source.Data` in your `sample` Object above.
 
 ## Development
