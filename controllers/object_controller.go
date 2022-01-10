@@ -57,13 +57,6 @@ const (
 	Empty     = ""
 )
 
-type Action int
-
-const (
-	StoreAction = iota
-	DeleteAction
-)
-
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=s3.aws.dev.nimak.link,resources=objects/finalizers,verbs=update
@@ -85,12 +78,12 @@ func (r *ObjectReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			}
 		}
 		// process object creation / update
-		if err := r.process(ctx, &obj, StoreAction); err != nil {
+		if err := r.processStore(ctx, &obj); err != nil {
 			return ctrl.Result{}, err
 		}
 	} else {
 		if controllerutil.ContainsFinalizer(&obj, ObjectFinalizer) {
-			if err := r.process(ctx, &obj, DeleteAction); err != nil {
+			if err := r.processDelete(ctx, &obj); err != nil {
 				return ctrl.Result{}, err
 			}
 
@@ -112,68 +105,84 @@ func (r *ObjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *ObjectReconciler) process(ctx context.Context, obj *cloudobject.Object, action Action) (controllerError error) {
-	var (
-		// we use err to capture non-controller errors and
-		// handle them separately for external operations
-		// via the deferred function `processError`
-		err error
-
-		secretData []byte
-		objData    []byte
-	)
+func (r *ObjectReconciler) processStore(ctx context.Context, obj *cloudobject.Object) (controllerError error) {
+	// we use err to capture non-controller errors and
+	// handle them separately for external operations
+	// via the deferred function `processError`
+	var err error
 
 	log := log.FromContext(ctx)
-	log.Info("processing resource", "key", client.ObjectKeyFromObject(obj), "action", action)
+	log.Info("processing resource storing", "key", client.ObjectKeyFromObject(obj))
 
 	defer func() {
-		controllerError = r.processError(ctx, obj, action, &err)
+		controllerError = r.processError(ctx, obj, &err, false)
 	}()
 
+	var secretData []byte
 	if secretData, err = r.pullSecret(ctx, obj); err != nil {
 		return
 	}
 
 	log.Info("fetching object store")
+	var objData []byte
+	if objData, err = r.extractData(ctx, obj); err != nil {
+		return
+	}
+
 	objectStore := r.StoreManager.Get(ctrlapi.ConfigData{Secret: secretData, Region: obj.Spec.Target.Region})
-	switch action {
-	case StoreAction:
-		if objData, err = r.extractData(ctx, obj); err != nil {
+	if err = objectStore.Store(ctx, objData, obj.Spec.Target); err != nil {
+		return
+	}
+
+	obj.Status.Synced = true
+	obj.Status.Reference = fmt.Sprintf("s3://%s/%s", obj.Spec.Target.Bucket, obj.Spec.Target.Key)
+	if controllerError = r.Status().Update(ctx, obj); controllerError != nil {
+		return
+	}
+
+	r.Recorder.Event(obj, corev1.EventTypeNormal, Synced, fmt.Sprintf("object reference: %s", printReference(obj)))
+	log.Info("successfully synced resource", "key", printReference(obj))
+
+	return nil
+}
+
+func (r *ObjectReconciler) processDelete(ctx context.Context, obj *cloudobject.Object) (controllerError error) {
+	// we use err to capture non-controller errors and
+	// handle them separately for external operations
+	// via the deferred function `processError`
+	var err error
+
+	log := log.FromContext(ctx)
+	log.Info("processing resource deletion", "key", client.ObjectKeyFromObject(obj))
+
+	defer func() {
+		controllerError = r.processError(ctx, obj, &err, true)
+	}()
+
+	switch strings.ToLower(obj.Spec.DeletionPolicy) {
+	case Delete:
+		log.Info("fetching object store")
+		var secretData []byte
+		if secretData, err = r.pullSecret(ctx, obj); err != nil {
 			return
 		}
 
-		if err = objectStore.Store(ctx, objData, obj.Spec.Target); err != nil {
+		objectStore := r.StoreManager.Get(ctrlapi.ConfigData{Secret: secretData, Region: obj.Spec.Target.Region})
+		if err = objectStore.Delete(ctx, obj.Spec.Target); err != nil {
 			return
 		}
-
-		obj.Status.Synced = true
-		obj.Status.Reference = fmt.Sprintf("s3://%s/%s", obj.Spec.Target.Bucket, obj.Spec.Target.Key)
-		if controllerError = r.Status().Update(ctx, obj); controllerError != nil {
-			return
-		}
-
-		r.Recorder.Event(obj, corev1.EventTypeNormal, Synced, fmt.Sprintf("object reference: %s", printReference(obj)))
-		log.Info("successfully synced resource", "key", printReference(obj))
-
-	case DeleteAction:
-		switch strings.ToLower(obj.Spec.DeletionPolicy) {
-		case Delete:
-			if err = objectStore.Delete(ctx, obj.Spec.Target); err != nil {
-				return
-			}
-			log.Info("successfully deleted resource", "key", printReference(obj))
-		case Retain:
-			log.Info("retaining the object in the object store")
-			// do nothing
-		default:
-			err = errors.Errorf("invalid deletionPolicy %s", obj.Spec.DeletionPolicy)
-		}
+		log.Info("successfully deleted resource", "key", printReference(obj))
+	case Retain:
+		log.Info("retaining the object in the object store")
+		// do nothing
+	default:
+		err = errors.Errorf("invalid deletionPolicy %s", obj.Spec.DeletionPolicy)
 	}
 
 	return nil
 }
 
-func (r *ObjectReconciler) processError(ctx context.Context, obj *cloudobject.Object, action Action, processingError *error) error {
+func (r *ObjectReconciler) processError(ctx context.Context, obj *cloudobject.Object, processingError *error, failReconciler bool) error {
 	pe := *processingError
 	if pe == nil {
 		return nil
@@ -191,7 +200,7 @@ func (r *ObjectReconciler) processError(ctx context.Context, obj *cloudobject.Ob
 
 	// fail reconciler and prevent resource deletion
 	// if along the way deleting the remote object fails
-	if action == DeleteAction {
+	if failReconciler {
 		return pe
 	}
 
